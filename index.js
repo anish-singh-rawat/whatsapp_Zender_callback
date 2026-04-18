@@ -14,20 +14,43 @@ const PORT = 7001;
 
 const sessions = {};
 
-app.get("/", (_req, res) => res.send("OK"));
-app.get("/sessions", (_req, res) => {
-  const list = Object.entries(sessions).map(([id, s]) => ({
-    sessionId: id,
-    status: s.status,
-  }));
-  res.json(list);
-});
-app.get("/status", (_req, res) => {
+// Root endpoint — Zender reads version, status, connected from here
+app.get("/", (_req, res) => {
   const connected = Object.values(sessions).some(s => s.status === "connected");
-  res.json({ status: connected });
+  res.json({
+    version: "2.0.0",
+    status: true,
+    connected: connected,
+  });
 });
 
-app.get("/instance", (_req, res) => res.json({ instance: "active" }));
+
+app.get("/sessions", (_req, res) => {
+  const data = Object.keys(sessions).map((id) => ({
+    id: id,
+    name: id,
+    status: sessions[id].status === "connected" ? "connected" : "disconnected",
+  }));
+
+  res.json(data);
+});
+
+
+app.get("/status", (_req, res) => {
+  const connected = Object.values(sessions).some(s => s.status === "connected");
+  res.json({
+    status: true,
+    connected: connected,
+    version: "2.0.0",
+  });
+});
+
+app.get("/instance", (_req, res) => {
+  res.json({
+    status: true,
+    message: "Server is running",
+  });
+});
 
 app.use((req, res, next) => {
     if (req.path.startsWith("/qr")) return next();
@@ -106,18 +129,6 @@ app.post("/instance", async (req, res) => {
   res.json({ message: "Session started", sessionId });
 });
 
-// app.get("/qr/:sessionId", (req, res) => {
-//   const session = sessions[req.params.sessionId];
-
-//   if (!session) {
-//     return res.status(404).json({ error: "Session not found" });
-//   }
-
-//   res.json({
-//     status: session.status,
-//     qrCode: session.qr,  
-//   });
-// });
 
 app.get("/qr/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
@@ -137,15 +148,27 @@ app.get("/qr/:sessionId", (req, res) => {
   res.end(img);
 });
 
+// app.get("/status/:sessionId", (req, res) => {
+//   const session = sessions[req.params.sessionId];
+
+//   if (!session) {
+//     return res.status(404).json({ error: "Session not found" });
+//   }
+
+//   res.json({
+//     status: session.status,
+//   });
+// });
+
 app.get("/status/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
 
   if (!session) {
-    return res.status(404).json({ error: "Session not found" });
+    return res.json({ status: "disconnected" });
   }
 
   res.json({
-    status: session.status,
+    status: session.status === "connected" ? "connected" : "disconnected",
   });
 });
 
