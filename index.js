@@ -106,17 +106,35 @@ app.post("/instance", async (req, res) => {
   res.json({ message: "Session started", sessionId });
 });
 
+// app.get("/qr/:sessionId", (req, res) => {
+//   const session = sessions[req.params.sessionId];
+
+//   if (!session) {
+//     return res.status(404).json({ error: "Session not found" });
+//   }
+
+//   res.json({
+//     status: session.status,
+//     qrCode: session.qr,  
+//   });
+// });
+
 app.get("/qr/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
 
-  if (!session) {
-    return res.status(404).json({ error: "Session not found" });
+  if (!session || !session.qr) {
+    return res.status(404).send("QR not ready");
   }
 
-  res.json({
-    status: session.status,
-    qrCode: session.qr,  
+  const base64Data = session.qr.replace(/^data:image\/png;base64,/, "");
+  const img = Buffer.from(base64Data, "base64");
+
+  res.writeHead(200, {
+    "Content-Type": "image/png",
+    "Content-Length": img.length,
   });
+
+  res.end(img);
 });
 
 app.get("/status/:sessionId", (req, res) => {
