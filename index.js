@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -7,7 +8,17 @@ import makeWASocket, {
 import qrcode from "qrcode";
 
 const app = express();
+app.use(cors({ origin: "*" }));
 app.use(express.json());
+
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log('  Headers:', JSON.stringify(req.headers));
+  if (req.body && Object.keys(req.body).length) {
+    console.log('  Body:', JSON.stringify(req.body));
+  }
+  next();
+});
 
 const SECRET_KEY = "anish-super-secret-123";
 const PORT = 7001;
