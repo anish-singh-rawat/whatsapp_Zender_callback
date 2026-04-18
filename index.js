@@ -13,7 +13,13 @@ const SECRET_KEY = "anish-super-secret-123";
 const PORT = 7001;
 
 app.get("/", (_req, res) => res.send("OK"));
-app.get("/sessions", (_req, res) => res.json([]));
+app.get("/sessions", (_req, res) => {
+  const list = Object.entries(sessions).map(([id, s]) => ({
+    sessionId: id,
+    status: s.status,
+  }));
+  res.json(list);
+});
 app.get("/status", (_req, res) => {
   const connected = Object.values(sessions).some(s => s.status === "connected");
   res.json({ status: connected });
