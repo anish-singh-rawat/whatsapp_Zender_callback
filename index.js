@@ -67,19 +67,25 @@ app.get("/instance", (_req, res) => {
 // Pattern: GET /accounts/total/:hash/:secret
 app.get("/accounts/total/:hash/:secret", (req, res) => {
   const { secret } = req.params;
+  console.log(`  [accounts/total] secret received: "${secret}", expected: "${SECRET_KEY}", match: ${secret === SECRET_KEY}`);
 
   if (secret !== SECRET_KEY) {
+    console.log(`  [accounts/total] ❌ Unauthorized`);
     return res.status(401).json({ error: "Unauthorized" });
   }
 
   const total = Object.keys(sessions).length;
+  const connectedCount = Object.values(sessions).filter(s => s.status === "connected").length;
 
-  res.json({
+  const response = {
     status: true,
     version: "2.0.0",
     total: total,
-    connected: Object.values(sessions).filter(s => s.status === "connected").length,
-  });
+    connected: connectedCount,
+  };
+
+  console.log(`  [accounts/total] ✅ Responding:`, JSON.stringify(response));
+  res.json(response);
 });
 
 app.use((req, res, next) => {
