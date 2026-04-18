@@ -63,6 +63,25 @@ app.get("/instance", (_req, res) => {
   });
 });
 
+// 🔑 Zender pings this to verify server + get account count
+// Pattern: GET /accounts/total/:hash/:secret
+app.get("/accounts/total/:hash/:secret", (req, res) => {
+  const { secret } = req.params;
+
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const total = Object.keys(sessions).length;
+
+  res.json({
+    status: true,
+    version: "2.0.0",
+    total: total,
+    connected: Object.values(sessions).filter(s => s.status === "connected").length,
+  });
+});
+
 app.use((req, res, next) => {
     if (req.path.startsWith("/qr")) return next();
 
