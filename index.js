@@ -25,14 +25,17 @@ const PORT = 7001;
 
 const sessions = {};
 
-// Root endpoint — Zender reads version, status, connected from here
+// Root endpoint — Zender checks this for Online/Offline status
 app.get("/", (_req, res) => {
-  const connected = Object.values(sessions).some(s => s.status === "connected");
-  res.json({
+  const connectedCount = Object.values(sessions).filter(s => s.status === "connected").length;
+  const response = {
+    status: "active",
     version: "2.0.0",
-    status: true,
-    connected: connected,
-  });
+    connected: connectedCount,
+    total: Object.keys(sessions).length,
+  };
+  console.log("  [/] Responding:", JSON.stringify(response));
+  res.json(response);
 });
 
 
