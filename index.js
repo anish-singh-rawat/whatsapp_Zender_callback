@@ -9,15 +9,18 @@ import qrcode from "qrcode";
 const app = express();
 app.use(express.json());
 
-// 🔐 SECRET KEY
 const SECRET_KEY = "anish-super-secret-123";
+const PORT = 7001;
 
-app.get("/", (req, res) => res.send("OK"));
-app.get("/sessions", (req, res) => res.json([]));
-app.get("/status", (req, res) => res.json({ status: true }));
-app.get("/instance", (req, res) => res.json({ instance: "active" }));
+app.get("/", (_req, res) => res.send("OK"));
+app.get("/sessions", (_req, res) => res.json([]));
+app.get("/status", (_req, res) => {
+  const connected = Object.values(sessions).some(s => s.status === "connected");
+  res.json({ status: connected });
+});
 
-// 🔐 Middleware
+app.get("/instance", (_req, res) => res.json({ instance: "active" }));
+
 app.use((req, res, next) => {
   const key = req.headers["x-api-key"];
   if (key !== SECRET_KEY) {
@@ -26,10 +29,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🧠 Store sessions
 const sessions = {};
 
-// 🚀 Create Session
 async function startSession(sessionId) {
   const { state, saveCreds } = await useMultiFileAuthState(`auth/${sessionId}`);
   const { version } = await fetchLatestBaileysVersion();
@@ -75,9 +76,6 @@ async function startSession(sessionId) {
   });
 }
 
-
-
-// 📱 Create instance
 app.post("/instance", async (req, res) => {
   const { sessionId } = req.body;
 
@@ -89,12 +87,17 @@ app.post("/instance", async (req, res) => {
     return res.json({ message: "Session already exists" });
   }
 
-  await startSession(sessionId);
+  sessions[sessionId] = {
+    status: "initializing",
+    qr: null,
+    sock: null
+  };
+
+  startSession(sessionId); 
 
   res.json({ message: "Session started", sessionId });
 });
 
-// 📷 Get QR
 app.get("/qr/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
 
@@ -104,11 +107,10 @@ app.get("/qr/:sessionId", (req, res) => {
 
   res.json({
     status: session.status,
-    qr: session.qr,
+    qrCode: session.qr,  
   });
 });
 
-// 📊 Status
 app.get("/status/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
 
@@ -121,10 +123,13 @@ app.get("/status/:sessionId", (req, res) => {
   });
 });
 
-// 📤 Send message
 app.post("/send-message", async (req, res) => {
   try {
     const { sessionId, number, message } = req.body;
+
+    if (!sessionId || !number || !message) {
+      return res.status(400).json({ error: "sessionId, number and message are required" });
+    }
 
     const session = sessions[sessionId];
 
@@ -132,30 +137,33 @@ app.post("/send-message", async (req, res) => {
       return res.status(400).json({ error: "Session not connected" });
     }
 
-    await session.sock.sendMessage(
-      number + "@s.whatsapp.net",
-      { text: message }
-    );
+    const jid = number.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
 
-    res.json({ status: "sent" });
+    await session.sock.sendMessage(jid, { text: message });
+
+    res.json({ status: "sent", number: jid });
 
   } catch (err) {
+    console.error("❌ Send error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ❌ Delete session
 app.delete("/session/:sessionId", (req, res) => {
   const sessionId = req.params.sessionId;
 
   if (sessions[sessionId]) {
+    try {
+      sessions[sessionId].sock?.end();
+    } catch (error) { 
+      console.log("test", error);
+     }
     delete sessions[sessionId];
   }
 
   res.json({ message: "Session deleted" });
 });
 
-// 🚀 Start server
-app.listen(3003, "0.0.0.0", () => {
-  console.log("Anish 🚀 WA Server running on 3003");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Anish 🚀 WA Server running on port ${PORT}`);
 });
