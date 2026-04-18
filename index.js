@@ -29,10 +29,12 @@ const sessions = {};
 app.get("/", (_req, res) => {
   const connectedCount = Object.values(sessions).filter(s => s.status === "connected").length;
   const response = {
-    status: "active",
+    status: true,
+    active: true,
     version: "2.0.0",
     connected: connectedCount,
     total: Object.keys(sessions).length,
+    message: "WhatsApp Server Running",
   };
   console.log("  [/] Responding:", JSON.stringify(response));
   res.json(response);
