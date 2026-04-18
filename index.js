@@ -30,6 +30,8 @@ app.get("/status", (_req, res) => {
 app.get("/instance", (_req, res) => res.json({ instance: "active" }));
 
 app.use((req, res, next) => {
+    if (req.path.startsWith("/qr")) return next();
+
   const key = req.headers["x-api-key"];
   if (key !== SECRET_KEY) {
     return res.status(401).json({ error: "You are Unauthorized" });
