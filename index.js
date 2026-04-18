@@ -12,6 +12,8 @@ app.use(express.json());
 const SECRET_KEY = "anish-super-secret-123";
 const PORT = 7001;
 
+const sessions = {};
+
 app.get("/", (_req, res) => res.send("OK"));
 app.get("/sessions", (_req, res) => {
   const list = Object.entries(sessions).map(([id, s]) => ({
@@ -34,8 +36,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-
-const sessions = {};
 
 async function startSession(sessionId) {
   const { state, saveCreds } = await useMultiFileAuthState(`auth/${sessionId}`);
