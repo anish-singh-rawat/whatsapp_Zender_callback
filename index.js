@@ -10,248 +10,305 @@ import qrcode from "qrcode";
 const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // for form_params from Zender
 
+// 🔍 Request logger
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  console.log('  Headers:', JSON.stringify(req.headers));
   if (req.body && Object.keys(req.body).length) {
-    console.log('  Body:', JSON.stringify(req.body));
+    console.log("  Body:", JSON.stringify(req.body));
   }
   next();
 });
 
 const SECRET_KEY = "anish-super-secret-123";
 const PORT = 7001;
+const VERSION = "2.0.0";
 
+// 🧠 Sessions store
 const sessions = {};
 
-// Root endpoint — Zender checks this for Online/Offline status
+// ─────────────────────────────────────────────
+// ✅ GET /  — Zender check(): reads response.data.version
+// ─────────────────────────────────────────────
 app.get("/", (_req, res) => {
-  const connectedCount = Object.values(sessions).filter(s => s.status === "connected").length;
-  const response = {
-    status: true,
-    active: true,
-    version: "2.0.0",
-    connected: connectedCount,
-    total: Object.keys(sessions).length,
-    message: "WhatsApp Server Running",
-  };
-  console.log("  [/] Responding:", JSON.stringify(response));
-  res.json(response);
-});
-
-
-app.get("/sessions", (_req, res) => {
-  const data = Object.keys(sessions).map((id) => ({
-    id: id,
-    name: id,
-    status: sessions[id].status === "connected" ? "connected" : "disconnected",
-  }));
-
-  res.json(data);
-});
-
-
-app.get("/status", (_req, res) => {
-  const connected = Object.values(sessions).some(s => s.status === "connected");
   res.json({
-    status: true,
-    connected: connected,
-    version: "2.0.0",
+    status: 200,
+    data: {
+      version: VERSION,
+      connected: Object.values(sessions).filter(s => s.status === "connected").length,
+      total: Object.keys(sessions).length,
+    }
   });
 });
 
-app.get("/instance", (_req, res) => {
-  res.json({
-    status: true,
-    message: "Server is running",
-  });
-});
-
-// 🔑 Zender pings this to verify server + get account count
-// Pattern: GET /accounts/total/:hash/:secret
+// ─────────────────────────────────────────────
+// ✅ GET /accounts/total/:hash/:secret — Zender total(): reads response.data
+// ─────────────────────────────────────────────
 app.get("/accounts/total/:hash/:secret", (req, res) => {
   const { secret } = req.params;
-  console.log(`  [accounts/total] secret received: "${secret}", expected: "${SECRET_KEY}", match: ${secret === SECRET_KEY}`);
-
   if (secret !== SECRET_KEY) {
-    console.log(`  [accounts/total] ❌ Unauthorized`);
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json({ status: 401, data: null });
   }
-
-  const total = Object.keys(sessions).length;
-  const connectedCount = Object.values(sessions).filter(s => s.status === "connected").length;
-
-  const response = {
-    status: true,
-    version: "2.0.0",
-    total: total,
-    connected: connectedCount,
-  };
-
-  console.log(`  [accounts/total] ✅ Responding:`, JSON.stringify(response));
-  res.json(response);
+  res.json({
+    status: 200,
+    data: {
+      total: Object.keys(sessions).length,
+      connected: Object.values(sessions).filter(s => s.status === "connected").length,
+      version: VERSION,
+    }
+  });
 });
 
-app.use((req, res, next) => {
-    if (req.path.startsWith("/qr")) return next();
-
-  const key = req.headers["x-api-key"];
-  if (key !== SECRET_KEY) {
-    return res.status(401).json({ error: "You are Unauthorized" });
+// ─────────────────────────────────────────────
+// ✅ POST /accounts/create/:secret — Zender create(): reads response.status == 200, response.data.qr
+// ─────────────────────────────────────────────
+app.post("/accounts/create/:secret", async (req, res) => {
+  const { secret } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401, data: null });
   }
-  next();
+
+  const { unique, uid, hash } = req.body;
+  if (!unique) {
+    return res.json({ status: 400, data: null });
+  }
+
+  if (sessions[unique]) {
+    // already exists — return current QR or connected status
+    const session = sessions[unique];
+    return res.json({
+      status: 200,
+      data: { qr: session.qr, connected: session.status === "connected" }
+    });
+  }
+
+  // init session placeholder
+  sessions[unique] = { status: "initializing", qr: null, sock: null, uid, hash };
+  startSession(unique);
+
+  // wait briefly for QR to generate
+  await new Promise(r => setTimeout(r, 3000));
+
+  const session = sessions[unique];
+  res.json({
+    status: 200,
+    data: { qr: session?.qr || null, connected: session?.status === "connected" }
+  });
 });
 
+// ─────────────────────────────────────────────
+// ✅ GET /accounts/status/:hash/:unique/:secret — Zender status(): reads response.data
+// ─────────────────────────────────────────────
+app.get("/accounts/status/:hash/:unique/:secret", (req, res) => {
+  const { secret, unique } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401, data: null });
+  }
+
+  const session = sessions[unique];
+  res.json({
+    status: 200,
+    data: {
+      connected: session?.status === "connected" ? true : false,
+      qr: session?.qr || null,
+      status: session?.status || "not_found",
+    }
+  });
+});
+
+// ─────────────────────────────────────────────
+// ✅ GET /accounts/delete/:hash/:unique/:secret — Zender delete(): reads response.status
+// ─────────────────────────────────────────────
+app.get("/accounts/delete/:hash/:unique/:secret", (req, res) => {
+  const { secret, unique } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401 });
+  }
+
+  if (sessions[unique]) {
+    try { sessions[unique].sock?.end(); } catch (_) {}
+    delete sessions[unique];
+  }
+
+  res.json({ status: 200 });
+});
+
+// ─────────────────────────────────────────────
+// ✅ POST /accounts/update/:hash/:unique/:secret — Zender update(): reads response.status
+// ─────────────────────────────────────────────
+app.post("/accounts/update/:hash/:unique/:secret", (req, res) => {
+  const { secret } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401 });
+  }
+  res.json({ status: 200 });
+});
+
+// ─────────────────────────────────────────────
+// ✅ GET /chats/send/:hash/:unique/:secret — Zender send(): reads response.status
+// ✅ POST /chats/send/:hash/:unique/:secret — Zender sendPriority()
+// ─────────────────────────────────────────────
+app.get("/chats/send/:hash/:unique/:secret", (req, res) => {
+  res.json({ status: 200 });
+});
+
+app.post("/chats/send/:hash/:unique/:secret", async (req, res) => {
+  const { secret, unique } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401 });
+  }
+
+  const { recipient, message, id } = req.body;
+  const session = sessions[unique];
+
+  if (!session || session.status !== "connected") {
+    return res.json({ status: 400, error: "Session not connected" });
+  }
+
+  try {
+    const jid = recipient.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+    await session.sock.sendMessage(jid, { text: message });
+    res.json({ status: 200, data: { id } });
+  } catch (err) {
+    console.error("❌ Send error:", err);
+    res.json({ status: 500, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// ✅ GET /contacts/groups/:hash/:unique/:secret
+// ─────────────────────────────────────────────
+app.get("/contacts/groups/:hash/:unique/:secret", (req, res) => {
+  const { secret } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401 });
+  }
+  res.json({ status: 200, data: [] });
+});
+
+// ─────────────────────────────────────────────
+// ✅ GET /contacts/validate/:hash/:unique/:address/:secret
+// ─────────────────────────────────────────────
+app.get("/contacts/validate/:hash/:unique/:address/:secret", async (req, res) => {
+  const { secret, unique, address } = req.params;
+  if (secret !== SECRET_KEY) {
+    return res.status(401).json({ status: 401 });
+  }
+
+  const session = sessions[unique];
+  if (!session || session.status !== "connected") {
+    return res.json({ status: 400, error: "Session not connected" });
+  }
+
+  try {
+    const jid = address.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+    res.json({ status: 200, data: { jid } });
+  } catch (err) {
+    res.json({ status: 500, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// ✅ GET /files/garbage/:days
+// ─────────────────────────────────────────────
+app.get("/files/garbage/:days", (_req, res) => {
+  res.json({ status: 200 });
+});
+
+// ─────────────────────────────────────────────
+// 🚀 Session management
+// ─────────────────────────────────────────────
 async function startSession(sessionId) {
-  const { state, saveCreds } = await useMultiFileAuthState(`auth/${sessionId}`);
-  const { version } = await fetchLatestBaileysVersion();
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(`auth/${sessionId}`);
+    const { version } = await fetchLatestBaileysVersion();
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-  });
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+    });
 
-  sessions[sessionId] = {
-    sock,
-    status: "connecting",
-    qr: null,
-  };
+    sessions[sessionId] = { ...sessions[sessionId], sock, status: "connecting" };
 
-  sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, qr, lastDisconnect } = update;
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, qr, lastDisconnect } = update;
 
-    if (qr) {
-      sessions[sessionId].qr = await qrcode.toDataURL(qr);
-      sessions[sessionId].status = "qr";
-    }
-
-    if (connection === "open") {
-      sessions[sessionId].status = "connected";
-      sessions[sessionId].qr = null;
-      console.log(`✅ ${sessionId} connected`);
-    }
-
-    if (connection === "close") {
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
-      sessions[sessionId].status = "disconnected";
-
-      if (shouldReconnect) {
-        setTimeout(() => startSession(sessionId), 2000);
+      if (qr) {
+        sessions[sessionId].qr = await qrcode.toDataURL(qr);
+        sessions[sessionId].status = "qr";
+        console.log(`📱 QR ready for ${sessionId}`);
       }
-    }
-  });
+
+      if (connection === "open") {
+        sessions[sessionId].status = "connected";
+        sessions[sessionId].qr = null;
+        console.log(`✅ ${sessionId} connected`);
+      }
+
+      if (connection === "close") {
+        const shouldReconnect =
+          lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        sessions[sessionId].status = "disconnected";
+        if (shouldReconnect) {
+          console.log(`🔄 Reconnecting ${sessionId}...`);
+          setTimeout(() => startSession(sessionId), 3000);
+        }
+      }
+    });
+  } catch (err) {
+    console.error(`❌ startSession error for ${sessionId}:`, err.message);
+    if (sessions[sessionId]) sessions[sessionId].status = "error";
+  }
 }
 
+// ─────────────────────────────────────────────
+// Legacy endpoints (keep for manual use)
+// ─────────────────────────────────────────────
 app.post("/instance", async (req, res) => {
   const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+  if (sessions[sessionId]) return res.json({ message: "Session already exists" });
 
-  if (!sessionId) {
-    return res.status(400).json({ error: "sessionId required" });
-  }
-
-  if (sessions[sessionId]) {
-    return res.json({ message: "Session already exists" });
-  }
-
-  sessions[sessionId] = {
-    status: "initializing",
-    qr: null,
-    sock: null
-  };
-
-  startSession(sessionId); 
-
+  sessions[sessionId] = { status: "initializing", qr: null, sock: null };
+  startSession(sessionId);
   res.json({ message: "Session started", sessionId });
 });
 
-
 app.get("/qr/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
-
-  if (!session || !session.qr) {
-    return res.status(404).send("QR not ready");
-  }
+  if (!session || !session.qr) return res.status(404).send("QR not ready");
 
   const base64Data = session.qr.replace(/^data:image\/png;base64,/, "");
   const img = Buffer.from(base64Data, "base64");
-
-  res.writeHead(200, {
-    "Content-Type": "image/png",
-    "Content-Length": img.length,
-  });
-
+  res.writeHead(200, { "Content-Type": "image/png", "Content-Length": img.length });
   res.end(img);
 });
 
-// app.get("/status/:sessionId", (req, res) => {
-//   const session = sessions[req.params.sessionId];
-
-//   if (!session) {
-//     return res.status(404).json({ error: "Session not found" });
-//   }
-
-//   res.json({
-//     status: session.status,
-//   });
-// });
-
 app.get("/status/:sessionId", (req, res) => {
   const session = sessions[req.params.sessionId];
-
-  if (!session) {
-    return res.json({ status: "disconnected" });
-  }
-
-  res.json({
-    status: session.status === "connected" ? "connected" : "disconnected",
-  });
+  res.json({ status: session?.status || "not_found" });
 });
 
 app.post("/send-message", async (req, res) => {
   try {
     const { sessionId, number, message } = req.body;
-
     if (!sessionId || !number || !message) {
       return res.status(400).json({ error: "sessionId, number and message are required" });
     }
-
     const session = sessions[sessionId];
-
     if (!session || session.status !== "connected") {
       return res.status(400).json({ error: "Session not connected" });
     }
-
     const jid = number.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
-
     await session.sock.sendMessage(jid, { text: message });
-
     res.json({ status: "sent", number: jid });
-
   } catch (err) {
-    console.error("❌ Send error:", err);
     res.status(500).json({ error: err.message });
   }
-});
-
-app.delete("/session/:sessionId", (req, res) => {
-  const sessionId = req.params.sessionId;
-
-  if (sessions[sessionId]) {
-    try {
-      sessions[sessionId].sock?.end();
-    } catch (error) { 
-      console.log("test", error);
-     }
-    delete sessions[sessionId];
-  }
-
-  res.json({ message: "Session deleted" });
 });
 
 app.listen(PORT, "0.0.0.0", () => {
